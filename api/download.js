@@ -1,47 +1,44 @@
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   const url = req.query.url;
-  if (!url) return res.status(400).json({ error: 'URL එක දාන්න' });
+  const id = url?.match(/(?:v=|be\/|shorts\/)([A-Za-z0-9_-]{11})/)?.[1];
+  if (!id) return res.status(400).json({ error: 'Invalid YouTube URL' });
 
-  const getId = (u) => {
-    const m = u.match(/(?:v=|youtu\.be\/|shorts\/)([0-9A-Za-z_-]{11})/);
-    return m? m[1] : null;
-  };
-  const videoId = getId(url);
-  if (!videoId) return res.status(400).json({ error: 'Valid YouTube URL එකක් දාන්න' });
-
-  const instances = [
-    'https://pipedapi.kavin.rocks',
-    'https://api.piped.private.coffee',
-    'https://pipedapi.adminforge.de'
+  // 2026 working instances
+  const apis = [
+    `https://pipedapi.adminforge.de/streams/${id}`,
+    `https://api.piped.private.coffee/streams/${id}`,
+    `https://pipedapi.mha.fi/streams/${id}`,
+    `https://inv.nadeko.net/api/v1/videos/${id}`
   ];
 
-  for (let base of instances) {
+  for (let api of apis) {
     try {
-      const r = await fetch(`${base}/streams/${videoId}`);
+      const r = await fetch(api, { headers: { 'User-Agent': 'Mozilla/5.0' } });
       if (!r.ok) continue;
-      const data = await r.json();
-      if (!data.videoStreams) continue;
+      const d = await r.json();
 
-      const mp4 = data.videoStreams
-       .filter(s => s.mimeType && s.mimeType.includes('mp4') && s.url)
-       .sort((a,b) => (b.height || 0) - (a.height || 0))
-       .slice(0, 4)
-       .map(s => ({ quality: s.qualityLabel || `${s.height}p`, url: s.url }));
-
-      if (mp4.length === 0) continue;
-
-      return res.json({
-        title: data.title,
-        thumbnail: data.thumbnailUrl,
-        formats: mp4
-      });
-    } catch (e) { continue; }
+      // Invidious format
+      if (d.formatStreams) {
+        return res.json({
+          title: d.title,
+          thumbnail: d.videoThumbnails?.pop()?.url,
+          formats: d.formatStreams.filter(f=>f.container==='mp4').slice(0,3).map(f=>({quality:f.qualityLabel, url:f.url}))
+        });
+      }
+      // Piped format
+      if (d.videoStreams) {
+        return res.json({
+          title: d.title,
+          thumbnail: d.thumbnailUrl,
+          formats: d.videoStreams.filter(s=>s.mimeType?.includes('mp4')).slice(0,3).map(s=>({quality:s.qualityLabel, url:s.url}))
+        });
+      }
+    } catch(e){ continue; }
   }
-
-  return res.status(500).json({ error: 'YouTube තාම Block - වෙන Instance එකක් Try වෙනවා. තත්පර 10කින් Refresh කරන්න' });
+  return res.status(500).json({ error: 'All APIs down, try again in 30 sec' });
 };
